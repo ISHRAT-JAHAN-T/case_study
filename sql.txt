@@ -1,0 +1,605 @@
+#i drop un-necessary colum for save my memor. dro star_station_name, start_station_id, end_station_name, end_station_id, start_lat, start_lng, end_lat, end_lng 
+
+$for random sampling . i did random sampling in some month which data was large and can to insert in bigquery . take  96835 row for random sampling 
+
+import pandas as pd
+import random
+
+# Function to perform random sampling from a CSV file
+def random_sampling(csv_file, sample_size):
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv(csv_file)
+
+    # Check if the sample size is valid
+    if sample_size > len(df):
+        print(f"Sample size exceeds the number of rows in the CSV file. Maximum sample size: {len(df)}")
+        return None
+
+    # Perform random sampling
+    random_sample = random.sample(range(len(df)), sample_size)
+
+    # Create a new DataFrame containing the random sample
+    sampled_df = df.iloc[random_sample]
+
+    return sampled_df
+
+# Set the CSV file path and the desired sample size
+csv_file_path = "C:\\Users\\ishra\\Downloads\\202107-divvy-tripdata\\202107-divvy-tripdata.csv"
+sample_size = 96835
+
+# Call the random_sampling function
+sampled_data = random_sampling(csv_file_path, sample_size)
+
+# Save the sampled data to a new CSV file
+output_csv_file = "C:\\Users\\ishra\\Downloads\\202107-divvy-tripdata\\sampled_data.csv"
+sampled_data.to_csv(output_csv_file, index=False)
+
+print("Random sampling completed and saved to 'sampled_data.csv'")
+ 
+
+
+
+
+#only keep ride_id, readable_type, station_at, ended_at, member_casual the 5 columes 
+#drop query 
+ALTER TABLE database_name.table_name
+DROP COLUMN start_station_name,
+DROP COLUMN start_station_id,
+DROP COLUMN end_station_name,
+DROP COLUMN end_station_id,
+DROP COLUMN start_lat,
+DROP COLUMN start_lng,
+DROP COLUMN end_lat,
+DROP COLUMN end_lng; 
+
+
+#for making my analysis easy i combine all table together name combine_table. 
+CREATE TABLE bike_share.combine_table AS
+(
+  SELECT * FROM `astral-sorter-376318.bike_share.january_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.february_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.march_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.april_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.may_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.june_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.july_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.augest_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.september_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.october_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.november_2021`
+  UNION ALL
+  SELECT * FROM `astral-sorter-376318.bike_share.december_2021`
+); 
+
+
+
+#after combine_table i count total row. and the total row was 2968268 
+$total row count query 
+select count(*)
+from bike_share.combine_table 
+
+
+#now my concern is data cleaning. 
+#find out all the data types of the columns 
+
+SELECT column_name, data_type
+FROM bike_share.INFORMATION_SCHEMA.COLUMNS
+WHERE table_name = 'combine_table';  
+
+output: 
+ride_id
+	
+STRING
+	
+2 	
+rideable_type
+	
+STRING
+	
+3 	
+started_at
+	
+TIMESTAMP
+	
+4 	
+ended_at
+	
+TIMESTAMP
+	
+5 	
+member_casual
+	
+STRING 
+
+#-- checking for number of null values in all columns
+
+SELECT COUNT(*) - COUNT(ride_id) ride_id,
+ COUNT(*) - COUNT(rideable_type) rideable_type,
+ COUNT(*) - COUNT(started_at) started_at,
+ COUNT(*) - COUNT(ended_at) ended_at,
+ COUNT(*) - COUNT(member_casual) member_casual
+FROM `bike_share.combine_table`;
+
+
+#i did not find any null values here 
+#-- checking for duplicate rows 
+
+
+select count(ride_id) - count(distinct(ride_id)) 
+from bike_share.combine_table 
+
+
+#no duplicate ride_id here 
+#ride_length > 1 AND ride_length < 1440: Excludes rows where ride_length is less than 1 minute or more than 1440 minutes (i.e., 24 hours).
+
+#To calculate the ride length using start_station_id and end_station_id, we first need to convert the timestamps in both columns to proper date-time format. Once we have the timestamps in a proper format, we can calculate the ride length in minutes and then filter out the rows where the ride length is less than 1 minute or more than 1440 minutes.
+
+select count(ride_id) as count_row
+FROM
+(
+SELECT
+  ride_id,
+  rideable_type,
+  started_at AS started_at,
+  ended_at AS ended_at,
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) AS ride_length
+FROM
+  bike_share.combine_table
+WHERE
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) > 1
+  AND
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) < 1440
+) as t1 
+
+
+#2879089 rows have whos ride length gater than 1minute and less than 24 hours 
+#delet 89,179 data whos ride_length was less than 1 minute or gater than 24 hours 
+
+
+#make new table clean_combine_table which have only data which ride_length gater than 1minute and less than 24 hours
+
+CREATE TABLE bike_share.clean_combine_table AS
+(
+SELECT
+  ride_id,
+  rideable_type,
+  started_at AS started_at,
+  ended_at AS ended_at,member_casual,
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) AS ride_length
+FROM
+  bike_share.combine_table
+WHERE
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) > 1
+  AND
+  TIMESTAMP_DIFF(ended_at, started_at, MINUTE) < 1440
+)
+
+
+#now i will analysis data 
+1.how many types of bike have here 
+select rideable_type,count(rideable_type) as nbr_of_ride_type
+from bike_share.clean_combine_table
+group by rideable_type; 
+
+#we got 3 types of bike.1. docked_bike 169209 2. classic_bike 1646123 3.electric_bike 1063757
+
+
+
+
+#most hipe useable type of bike 
+
+
+
+select t1.rideable_type, t1.nbr_of_ride_type
+from
+(
+select rideable_type,count(rideable_type) as nbr_of_ride_type
+from bike_share.clean_combine_table
+group by rideable_type
+order by nbr_of_ride_type desc) as t1
+limit 1; 
+
+#classic_bike 1646123
+
+
+
+$how many types of riders they have 
+select member_casual, count(ride_id) as nbr_of_ride 
+from `astral-sorter-376318.bike_share.clean_combine_table` 
+group by member_casual 
+order by nbr_of_ride
+
+#what type of riders have most. casual or member? 
+
+
+select t1.member_casual, t1.nbr_of_ride
+from
+(
+select member_casual, count(ride_id) as nbr_of_ride 
+from `astral-sorter-376318.bike_share.clean_combine_table` 
+group by member_casual 
+order by nbr_of_ride DESC
+) as t1
+limit 1
+
+#ans:  member 1666367
+	
+
+
+
+
+#bike types used by riders 
+-- bikes types used by riders
+ 
+select member_casual,rideable_type,count(ride_id) as total_trips
+from `astral-sorter-376318.bike_share.clean_combine_table` 
+group by member_casual,rideable_type 
+order by member_casual,total_trips  
+
+
+
+
+
+
+
+
+#number of trips per month 
+
+
+select month_name,count(month_name) as trips_per_month
+from
+(
+SELECT 
+  EXTRACT(MONTH FROM started_at) AS month_number,CASE EXTRACT(MONTH FROM started_at)
+    WHEN 1 THEN 'January'
+    WHEN 2 THEN 'February'
+    WHEN 3 THEN 'March'
+    WHEN 4 THEN 'April'
+    WHEN 5 THEN 'May'
+    WHEN 6 THEN 'June'
+    WHEN 7 THEN 'July'
+    WHEN 8 THEN 'August'
+    WHEN 9 THEN 'September'
+    WHEN 10 THEN 'October'
+    WHEN 11 THEN 'November'
+    WHEN 12 THEN 'December'
+  END AS month_name
+FROM bike_share.clean_combine_table
+
+order by month_number 
+) as t1
+group by month_name 
+
+#ans: 
+   February 47908,
+
+
+
+
+
+
+#maximum trip happen which month 
+select t2.month_name,t2.trips_per_month
+
+from
+(
+select month_name,count(month_name) as trips_per_month
+from
+(
+SELECT 
+  EXTRACT(MONTH FROM started_at) AS month_number,CASE EXTRACT(MONTH FROM started_at)
+    WHEN 1 THEN 'January'
+    WHEN 2 THEN 'February'
+    WHEN 3 THEN 'March'
+    WHEN 4 THEN 'April'
+    WHEN 5 THEN 'May'
+    WHEN 6 THEN 'June'
+    WHEN 7 THEN 'July'
+    WHEN 8 THEN 'August'
+    WHEN 9 THEN 'September'
+    WHEN 10 THEN 'October'
+    WHEN 11 THEN 'November'
+    WHEN 12 THEN 'December'
+  END AS month_name
+FROM bike_share.clean_combine_table
+
+order by month_number 
+) as t1
+group by month_name
+order by trips_per_month Desc
+) as t2
+limit 1 
+
+#june 708956 
+#minimum trip happen which month
+select t2.month_name,t2.trips_per_month
+
+from
+(
+select month_name,count(month_name) as trips_per_month
+from
+(
+SELECT 
+  EXTRACT(MONTH FROM started_at) AS month_number,CASE EXTRACT(MONTH FROM started_at)
+    WHEN 1 THEN 'January'
+    WHEN 2 THEN 'February'
+    WHEN 3 THEN 'March'
+    WHEN 4 THEN 'April'
+    WHEN 5 THEN 'May'
+    WHEN 6 THEN 'June'
+    WHEN 7 THEN 'July'
+    WHEN 8 THEN 'August'
+    WHEN 9 THEN 'September'
+    WHEN 10 THEN 'October'
+    WHEN 11 THEN 'November'
+    WHEN 12 THEN 'December'
+  END AS month_name
+FROM bike_share.clean_combine_table
+
+order by month_number 
+) as t1
+group by month_name
+order by trips_per_month 
+) as t2
+limit 1  
+
+
+
+
+
+
+
+#most busiest time of the day 
+
+select 
+case 
+when Extract(HOUR FROM started_at)>=5 and Extract(HOUR FROM started_at)<12  THEN "morning"
+
+when Extract(HOUR FROM started_at)>=12 and Extract(HOUR FROM started_at)<17  THEN  'Afternoon'
+
+when Extract(HOUR FROM started_at)>=17 and Extract(HOUR FROM started_at)<21  THEN 'Evening'
+
+ELSE 'Nigth'
+
+END AS time_period,
+COUNT(*) AS number_of_rides
+
+
+FROM bike_share.clean_combine_table
+
+GROUP BY time_period
+
+
+
+ORDER BY number_of_rides DESC
+limit 1;
+
+#Afternoon 1004713
+
+
+
+
+
+##-- average ride_length per month
+
+select sum(trips_per_month)/12 as averge_trips_per_month
+from
+(
+select month_name,count(month_name) as trips_per_month
+from
+(
+SELECT 
+  EXTRACT(MONTH FROM started_at) AS month_number,CASE EXTRACT(MONTH FROM started_at)
+    WHEN 1 THEN 'January'
+    WHEN 2 THEN 'February'
+    WHEN 3 THEN 'March'
+    WHEN 4 THEN 'April'
+    WHEN 5 THEN 'May'
+    WHEN 6 THEN 'June'
+    WHEN 7 THEN 'July'
+    WHEN 8 THEN 'August'
+    WHEN 9 THEN 'September'
+    WHEN 10 THEN 'October'
+    WHEN 11 THEN 'November'
+    WHEN 12 THEN 'December'
+  END AS month_name
+FROM bike_share.clean_combine_table
+
+order by month_number 
+) as t1
+group by month_name
+order by trips_per_month 
+) as t1
+
+
+
+
+
+
+
+
+
+
+# February 47908 
+
+
+-- no. of trips per day of week 
+SELECT 
+  CASE EXTRACT(DAYOFWEEK FROM started_at)
+    WHEN 1 THEN 'Sunday'
+    WHEN 2 THEN 'Monday'
+    WHEN 3 THEN 'Tuesday'
+    WHEN 4 THEN 'Wednesday'
+    WHEN 5 THEN 'Thursday'
+    WHEN 6 THEN 'Friday'
+    WHEN 7 THEN 'Saturday'
+  END AS day_of_week,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY day_of_week; 
+
+#which day max ride 
+
+select t1.day_of_week, t1.number_of_trips
+from
+
+(
+SELECT 
+  CASE EXTRACT(DAYOFWEEK FROM started_at)
+    WHEN 1 THEN 'Sunday'
+    WHEN 2 THEN 'Monday'
+    WHEN 3 THEN 'Tuesday'
+    WHEN 4 THEN 'Wednesday'
+    WHEN 5 THEN 'Thursday'
+    WHEN 6 THEN 'Friday'
+    WHEN 7 THEN 'Saturday'
+  END AS day_of_week,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY day_of_week
+order by number_of_trips DESC
+) as t1 
+limit 1 
+
+#saturday 496881 
+
+
+#min ride length 
+
+
+select t1.day_of_week, t1.number_of_trips
+from
+
+(
+SELECT 
+  CASE EXTRACT(DAYOFWEEK FROM started_at)
+    WHEN 1 THEN 'Sunday'
+    WHEN 2 THEN 'Monday'
+    WHEN 3 THEN 'Tuesday'
+    WHEN 4 THEN 'Wednesday'
+    WHEN 5 THEN 'Thursday'
+    WHEN 6 THEN 'Friday'
+    WHEN 7 THEN 'Saturday'
+  END AS day_of_week,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY day_of_week
+order by number_of_trips
+) as t1 
+limit 1   
+
+
+
+-- average ride_length per day of week
+select avg(number_of_trips)
+from
+
+(
+SELECT 
+  CASE EXTRACT(DAYOFWEEK FROM started_at)
+    WHEN 1 THEN 'Sunday'
+    WHEN 2 THEN 'Monday'
+    WHEN 3 THEN 'Tuesday'
+    WHEN 4 THEN 'Wednesday'
+    WHEN 5 THEN 'Thursday'
+    WHEN 6 THEN 'Friday'
+    WHEN 7 THEN 'Saturday'
+  END AS day_of_week,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY day_of_week
+order by number_of_trips
+) as t1 
+
+
+
+
+
+#thursday 364685
+#-- no. of trips per hour
+ 
+SELECT 
+  EXTRACT(HOUR FROM started_at) AS hour_of_day,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY hour_of_day
+ORDER BY hour_of_day;
+
+
+
+
+#number of averge trips per hour 
+select avg(number_of_trips)
+from
+(
+SELECT 
+  EXTRACT(HOUR FROM started_at) AS hour_of_day,
+  COUNT(*) AS number_of_trips
+FROM bike_share.clean_combine_table
+GROUP BY hour_of_day
+ORDER BY hour_of_day) as t1
+
+#number of averge trips per hour by member_casual 
+
+SELECT 
+  member_casual,
+  hour_of_day,
+  AVG(number_of_trips) AS average_trips_per_hour
+FROM
+(
+  SELECT 
+    EXTRACT(HOUR FROM started_at) AS hour_of_day,
+    COUNT(*) AS number_of_trips,
+    member_casual
+  FROM bike_share.clean_combine_table
+  GROUP BY hour_of_day, member_casual
+) as t1
+GROUP BY hour_of_day, member_casual
+ORDER BY hour_of_day, member_casual; 
+
+
+
+
+#the busiest season of the  year 
+
+SELECT
+  CASE
+    WHEN EXTRACT(MONTH FROM started_at) IN (6, 7, 8) THEN 'Summer'
+    WHEN EXTRACT(MONTH FROM started_at) IN (9, 10, 11) THEN 'Fall'
+    WHEN EXTRACT(MONTH FROM started_at) IN (12, 1, 2) THEN 'Winter'
+    ELSE 'Spring'
+  END AS season,
+  COUNT(*) AS number_of_rides
+FROM bike_share.clean_combine_table
+GROUP BY season
+ORDER BY number_of_rides DESC
+limit 1;
+
+
+#spring 1067649
+
+
+
+	
+ 
+
+#lets do the same analysis without combine table one then analysis. will do separetly and than join 
+
+
+
+
+
+
+
+
+
